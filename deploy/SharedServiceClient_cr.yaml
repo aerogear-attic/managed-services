@@ -1,0 +1,12 @@
+apiVersion: "aerogear.org/v1alpha1"
+kind: "SharedServiceClient"
+metadata:
+  name: "example-keycloak-client"
+spec:
+  serviceInstanceId: "1234"
+  params:
+  - name: CLIENT_ID
+    value: "org.example.android-app"
+  - name: CLIENT_TYPE
+    value: "public"
+
