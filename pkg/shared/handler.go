@@ -2,14 +2,14 @@ package shared
 
 import (
 	"context"
+	"errors"
+        "fmt"
 
 	"github.com/aerogear/shared-service-operator-poc/pkg/apis/aerogear/v1alpha1"
-
-	"fmt"
-
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 	"github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
+        "github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -17,6 +17,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	sc "github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset"
 
+        "k8s.io/apimachinery/pkg/runtime"
+        "encoding/json"
 )
 
 func NewHandler(k8sClient kubernetes.Interface, sharedServiceClient dynamic.ResourceInterface, operatorNS string, svcCatalog sc.Interface) sdk.Handler {
@@ -175,6 +177,39 @@ func (h *Handler)handleSharedServiceSliceDelete(service *v1alpha1.SharedServiceS
 
 func (h *Handler) handleSharedServiceClientCreateUpdate(serviceClient *v1alpha1.SharedServiceClient) error {
 	fmt.Println("called handleSharedServiceClientCreateUpdate")
+	svcClientCopy := serviceClient.DeepCopy()
+	sId := svcClientCopy.ServiceInstanceId
+	if sId == "" {
+	        return errors.New("no service id provided")
+        }
+        if len(serviceClient.Params) == 0 {
+                return errors.New("no params provided. unable to create binding")
+                //TODO - Want some fallback here to lookup other sources?
+                //TODO - Prefer using secretRef because so we don't inadvertently expose sensitive data?
+        }
+        raw, err := json.Marshal(serviceClient.Params)
+        if err != nil {
+                return errors.New("error reading params")
+        }
+	_, err = h.serviceCatalogClient.ServicecatalogV1beta1().ServiceBindings(h.operatorNS).Create(
+	        &v1beta1.ServiceBinding{
+	                TypeMeta: metav1.TypeMeta{
+	                        Kind: "ServiceBinding",
+	                        APIVersion: "servicecatalog.k8s.io/v1beta1",
+                        },
+	                Spec: v1beta1.ServiceBindingSpec{
+                                ServiceInstanceRef: v1beta1.LocalObjectReference{
+                                sId,
+                                },
+                                Parameters: &runtime.RawExtension{
+                                        Raw: raw,
+                                },
+                        },
+                },
+        )
+	if err != nil {
+	        return errors.New("error creating binding")
+        }
 	return nil
 }
 

@@ -75,6 +75,8 @@ type SharedServiceClient struct {
 	metav1.ObjectMeta `json:"metadata"`
 	Spec              SharedServiceClientSpec   `json:"spec"`
 	Status            SharedServiceClientStatus `json:"status,omitempty"`
+	ServiceInstanceId string `json:"serviceInstanceId,omitempty"`
+	Params            map[string]interface{} `json:"params,omitempty"`
 }
 
 type SharedServiceClientSpec struct {

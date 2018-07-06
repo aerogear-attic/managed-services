@@ -44,6 +44,17 @@ func (in *SharedServiceClient) DeepCopyInto(out *SharedServiceClient) {
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	out.Spec = in.Spec
 	out.Status = in.Status
+	if in.Params != nil {
+		in, out := &in.Params, &out.Params
+		*out = make(map[string]interface{}, len(*in))
+		for key, val := range *in {
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				(*out)[key] = val.DeepCopyinterface{}()
+			}
+		}
+	}
 	return
 }
 
