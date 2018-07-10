@@ -79,25 +79,14 @@ func (c *userProvidedController) Catalog() (*brokerapi.Catalog, error) {
 	//look up the sharedservice in the namespace
 
 	listed, err := c.sharedServiceClient.List(metav1.ListOptions{})
-	listed.(*unstructured.UnstructuredList).EachListItem(func(object runtime.Object) error {
-		bytes, err := object.(*unstructured.Unstructured).MarshalJSON()
-		if err != nil{
-			return err
-		}
-		s := &v1alpha1.SharedService{}
-		if err := json.Unmarshal(bytes,s); err != nil{
-			return err
-		}
-		fmt.Println("shared service is ", s)
-		return nil
-	})
 	var services []*brokerapi.Service
 	// _ = services
 	_ = err
 
 	fmt.Println("%v \n", reflect.TypeOf(listed))
-	li := v1alpha1.SharedServiceList{}
+	li, ok := listed.(*v1alpha1.SharedServiceList)
 	// _ = ok
+	fmt.Printf("%v %v\n dhsgsahgdshadgha", ok, li)
 	for _, sharedServiceCrd := range li.Items {
 		fmt.Printf("%v\n dhsgsahgdshadgha", sharedServiceCrd)
 		// 	if sharedServiceCrd.Status.Ready {
