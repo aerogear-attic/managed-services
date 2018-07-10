@@ -13,6 +13,7 @@ import (
 	"github.com/aerogear/managed-services/pkg/broker"
 	"github.com/aerogear/managed-services/pkg/broker/controller"
 	"github.com/aerogear/managed-services/pkg/broker/server"
+	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	glog "github.com/sirupsen/logrus"
 )
 
@@ -55,9 +56,11 @@ func runWithContext(ctx context.Context) error {
 	}
 
 	addr := ":" + strconv.Itoa(options.Port)
-	ctrlr := controller.CreateController()
 
 	var err error
+	sharedResourceClient, _, err := k8sclient.GetResourceClient("aerogear.org/v1alpha1", "SharedService", "test")
+	fmt.Printf("%v %v\n", sharedResourceClient, err)
+	ctrlr := controller.CreateController(sharedResourceClient)
 	if options.TLSCert == "" && options.TLSKey == "" {
 		err = server.Run(ctx, addr, ctrlr)
 	} else {

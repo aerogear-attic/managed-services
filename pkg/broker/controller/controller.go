@@ -20,13 +20,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
-
-	brokerapi "github.com/aerogear/managed-services/pkg/broker"
+	"github.com/aerogear/managed-services/pkg/apis/aerogear/v1alpha1"
 	"github.com/aerogear/managed-services/pkg/broker"
-
+	brokerapi "github.com/aerogear/managed-services/pkg/broker"
 	glog "github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 )
 
 // Controller defines the APIs that all controllers are expected to support. Implementations
@@ -42,7 +44,6 @@ type Controller interface {
 	UnBind(instanceID, bindingID, serviceID, planID string) error
 }
 
-
 type errNoSuchInstance struct {
 	instanceID string
 }
@@ -57,15 +58,17 @@ type userProvidedServiceInstance struct {
 }
 
 type userProvidedController struct {
-	rwMutex     sync.RWMutex
-	instanceMap map[string]*userProvidedServiceInstance
+	rwMutex             sync.RWMutex
+	instanceMap         map[string]*userProvidedServiceInstance
+	sharedServiceClient dynamic.ResourceInterface
 }
 
 // CreateController creates an instance of a User Provided service broker controller.
-func CreateController() Controller {
+func CreateController(sharedServiceClient dynamic.ResourceInterface) Controller {
 	var instanceMap = make(map[string]*userProvidedServiceInstance)
 	return &userProvidedController{
-		instanceMap: instanceMap,
+		instanceMap:         instanceMap,
+		sharedServiceClient: sharedServiceClient,
 	}
 }
 
@@ -73,134 +76,174 @@ func (c *userProvidedController) Catalog() (*brokerapi.Catalog, error) {
 	glog.Info("Catalog()")
 	//look up the sharedservice in the namespace
 
+	listed, err := c.sharedServiceClient.List(metav1.ListOptions{})
+	var services []*brokerapi.Service
+	// _ = services
+	_ = err
+
+	fmt.Println("%v \n", reflect.TypeOf(listed))
+	li, ok := listed.(*v1alpha1.SharedServiceList)
+	// _ = ok
+	fmt.Printf("%v %v\n dhsgsahgdshadgha", ok, li)
+	for _, sharedServiceCrd := range li.Items {
+		fmt.Printf("%v\n dhsgsahgdshadgha", sharedServiceCrd)
+		// 	if sharedServiceCrd.Status.Ready {
+
+		// 	}
+
+		// 	services = append(services, &brokerapi.Service{
+		// 		Name:        "user-provided-service",
+		// 		ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
+		// 		Description: "A user provided service",
+		// 		Plans: []brokerapi.ServicePlan{{
+		// 			Name:        "default",
+		// 			ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
+		// 			Description: "Sample plan description",
+		// 			Free:        true,
+		// 		}, {
+		// 			Name:        "premium",
+		// 			ID:          "cc0d7529-18e8-416d-8946-6f7456acd589",
+		// 			Description: "Premium plan",
+		// 			Free:        false,
+		// 		},
+		// 		},
+		// 		Bindable:       true,
+		// 		PlanUpdateable: true,
+		// 	})
+	}
+
 	return &brokerapi.Catalog{
-		Services: []*brokerapi.Service{
-			{
-				Name:        "user-provided-service",
-				ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
-				Description: "A user provided service",
-				Plans: []brokerapi.ServicePlan{{
-					Name:        "default",
-					ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
-					Description: "Sample plan description",
-					Free:        true,
-				}, {
-					Name:        "premium",
-					ID:          "cc0d7529-18e8-416d-8946-6f7456acd589",
-					Description: "Premium plan",
-					Free:        false,
-				},
-				},
-				Bindable:       true,
-				PlanUpdateable: true,
-			},
-			{
-				Name:        "user-provided-service-single-plan",
-				ID:          "5f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
-				Description: "A user provided service",
-				Plans: []brokerapi.ServicePlan{
-					{
-						Name:        "default",
-						ID:          "96064792-7ea2-467b-af93-ac9694d96d52",
-						Description: "Sample plan description",
-						Free:        true,
-					},
-				},
-				Bindable:       true,
-				PlanUpdateable: true,
-			},
-			{
-				Name:        "user-provided-service-with-schemas",
-				ID:          "8a6229d4-239e-4790-ba1f-8367004d0473",
-				Description: "A user provided service",
-				Plans: []brokerapi.ServicePlan{
-					{
-						Name:        "default",
-						ID:          "4dbcd97c-c9d2-4c6b-9503-4401a789b558",
-						Description: "Plan with parameter and response schemas",
-						Free:        true,
-						Schemas: &brokerapi.Schemas{
-							ServiceInstance: &brokerapi.ServiceInstanceSchema{
-								Create: &brokerapi.InputParametersSchema{
-									Parameters: map[string]interface{}{ // TODO: use a JSON Schema library instead?
-										"$schema": "http://json-schema.org/draft-04/schema#",
-										"type":    "object",
-										"properties": map[string]interface{}{
-											"param-1": map[string]interface{}{
-												"description": "First input parameter",
-												"type":        "string",
-											},
-											"param-2": map[string]interface{}{
-												"description": "Second input parameter",
-												"type":        "string",
-											},
-										},
-									},
-								},
-								Update: &brokerapi.InputParametersSchema{
-									Parameters: map[string]interface{}{
-										"$schema": "http://json-schema.org/draft-04/schema#",
-										"type":    "object",
-										"properties": map[string]interface{}{
-											"param-1": map[string]interface{}{
-												"description": "First input parameter",
-												"type":        "string",
-											},
-											"param-2": map[string]interface{}{
-												"description": "Second input parameter",
-												"type":        "string",
-											},
-										},
-									},
-								},
-							},
-							ServiceBinding: &brokerapi.ServiceBindingSchema{
-								Create: &brokerapi.RequestResponseSchema{
-									InputParametersSchema: brokerapi.InputParametersSchema{
-										Parameters: map[string]interface{}{
-											"$schema": "http://json-schema.org/draft-04/schema#",
-											"type":    "object",
-											"properties": map[string]interface{}{
-												"param-1": map[string]interface{}{
-													"description": "First input parameter",
-													"type":        "string",
-												},
-												"param-2": map[string]interface{}{
-													"description": "Second input parameter",
-													"type":        "string",
-												},
-											},
-										},
-									},
-									Response: map[string]interface{}{
-										"$schema": "http://json-schema.org/draft-04/schema#",
-										"type":    "object",
-										"properties": map[string]interface{}{
-											"credentials": map[string]interface{}{
-												"type": "object",
-												"properties": map[string]interface{}{
-													"special-key-1": map[string]interface{}{
-														"description": "Special key 1",
-														"type":        "string",
-													},
-													"special-key-2": map[string]interface{}{
-														"description": "Special key 2",
-														"type":        "string",
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				Bindable:       true,
-				PlanUpdateable: true,
-			},
-		},
+		Services: services,
 	}, nil
+	// fmt.Printf("%v %v\n dhsgsahgdshadgha", err, listed)
+	// return &brokerapi.Catalog{
+	// 	Services: []*brokerapi.Service{
+	// 		{
+	// 			Name:        "user-provided-service",
+	// 			ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
+	// 			Description: "A user provided service",
+	// 			Plans: []brokerapi.ServicePlan{{
+	// 				Name:        "default",
+	// 				ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
+	// 				Description: "Sample plan description",
+	// 				Free:        true,
+	// 			}, {
+	// 				Name:        "premium",
+	// 				ID:          "cc0d7529-18e8-416d-8946-6f7456acd589",
+	// 				Description: "Premium plan",
+	// 				Free:        false,
+	// 			},
+	// 			},
+	// 			Bindable:       true,
+	// 			PlanUpdateable: true,
+	// 		},
+	// 		{
+	// 			Name:        "user-provided-service-single-plan",
+	// 			ID:          "5f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
+	// 			Description: "A user provided service",
+	// 			Plans: []brokerapi.ServicePlan{
+	// 				{
+	// 					Name:        "default",
+	// 					ID:          "96064792-7ea2-467b-af93-ac9694d96d52",
+	// 					Description: "Sample plan description",
+	// 					Free:        true,
+	// 				},
+	// 			},
+	// 			Bindable:       true,
+	// 			PlanUpdateable: true,
+	// 		},
+	// 		{
+	// 			Name:        "user-provided-service-with-schemas",
+	// 			ID:          "8a6229d4-239e-4790-ba1f-8367004d0473",
+	// 			Description: "A user provided service",
+	// 			Plans: []brokerapi.ServicePlan{
+	// 				{
+	// 					Name:        "default",
+	// 					ID:          "4dbcd97c-c9d2-4c6b-9503-4401a789b558",
+	// 					Description: "Plan with parameter and response schemas",
+	// 					Free:        true,
+	// 					Schemas: &brokerapi.Schemas{
+	// 						ServiceInstance: &brokerapi.ServiceInstanceSchema{
+	// 							Create: &brokerapi.InputParametersSchema{
+	// 								Parameters: map[string]interface{}{ // TODO: use a JSON Schema library instead?
+	// 									"$schema": "http://json-schema.org/draft-04/schema#",
+	// 									"type":    "object",
+	// 									"properties": map[string]interface{}{
+	// 										"param-1": map[string]interface{}{
+	// 											"description": "First input parameter",
+	// 											"type":        "string",
+	// 										},
+	// 										"param-2": map[string]interface{}{
+	// 											"description": "Second input parameter",
+	// 											"type":        "string",
+	// 										},
+	// 									},
+	// 								},
+	// 							},
+	// 							Update: &brokerapi.InputParametersSchema{
+	// 								Parameters: map[string]interface{}{
+	// 									"$schema": "http://json-schema.org/draft-04/schema#",
+	// 									"type":    "object",
+	// 									"properties": map[string]interface{}{
+	// 										"param-1": map[string]interface{}{
+	// 											"description": "First input parameter",
+	// 											"type":        "string",
+	// 										},
+	// 										"param-2": map[string]interface{}{
+	// 											"description": "Second input parameter",
+	// 											"type":        "string",
+	// 										},
+	// 									},
+	// 								},
+	// 							},
+	// 						},
+	// 						ServiceBinding: &brokerapi.ServiceBindingSchema{
+	// 							Create: &brokerapi.RequestResponseSchema{
+	// 								InputParametersSchema: brokerapi.InputParametersSchema{
+	// 									Parameters: map[string]interface{}{
+	// 										"$schema": "http://json-schema.org/draft-04/schema#",
+	// 										"type":    "object",
+	// 										"properties": map[string]interface{}{
+	// 											"param-1": map[string]interface{}{
+	// 												"description": "First input parameter",
+	// 												"type":        "string",
+	// 											},
+	// 											"param-2": map[string]interface{}{
+	// 												"description": "Second input parameter",
+	// 												"type":        "string",
+	// 											},
+	// 										},
+	// 									},
+	// 								},
+	// 								Response: map[string]interface{}{
+	// 									"$schema": "http://json-schema.org/draft-04/schema#",
+	// 									"type":    "object",
+	// 									"properties": map[string]interface{}{
+	// 										"credentials": map[string]interface{}{
+	// 											"type": "object",
+	// 											"properties": map[string]interface{}{
+	// 												"special-key-1": map[string]interface{}{
+	// 													"description": "Special key 1",
+	// 													"type":        "string",
+	// 												},
+	// 												"special-key-2": map[string]interface{}{
+	// 													"description": "Special key 2",
+	// 													"type":        "string",
+	// 												},
+	// 											},
+	// 										},
+	// 									},
+	// 								},
+	// 							},
+	// 						},
+	// 					},
+	// 				},
+	// 			},
+	// 			Bindable:       true,
+	// 			PlanUpdateable: true,
+	// 		},
+	// 	},
+	// }, nil
 }
 
 func (c *userProvidedController) CreateServiceInstance(
