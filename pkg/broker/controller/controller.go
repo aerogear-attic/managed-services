@@ -73,45 +73,54 @@ func CreateController(sharedServiceClient dynamic.ResourceInterface) Controller 
 	}
 }
 
+func sharedServiceFromRunTime(object runtime.Object) (*v1alpha1.SharedService, error) {
+	bytes, err := object.(*unstructured.Unstructured).MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	s := &v1alpha1.SharedService{}
+	if err := json.Unmarshal(bytes, s); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func brokerServiceFromSharedService(sharedService *v1alpha1.SharedService) *brokerapi.Service {
+	// uuid generator
+	return &brokerapi.Service{
+		Name:        sharedService.Spec.ClusterServiceClassExternalName + "-slice",
+		ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
+		Description: "A user provided service",
+		Plans: []brokerapi.ServicePlan{{
+			Name:        "shared",
+			ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
+			Description: "Sample plan description",
+			Free:        true,
+		},
+		},
+		Bindable:       true,
+		PlanUpdateable: false,
+	}
+}
+
 func (c *userProvidedController) Catalog() (*brokerapi.Catalog, error) {
 	glog.Info("Catalog()")
-	//look up the sharedservice in the namespace
-	listed, err := c.sharedServiceClient.List(metav1.ListOptions{})
+
+	sharedServiceResourceList, err := c.sharedServiceClient.List(metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 
 	services := []*brokerapi.Service{}
-	listed.(*unstructured.UnstructuredList).EachListItem(func(object runtime.Object) error {
-		bytes, err := object.(*unstructured.Unstructured).MarshalJSON()
+	sharedServiceResourceList.(*unstructured.UnstructuredList).EachListItem(func(object runtime.Object) error {
+		sharedService, err := sharedServiceFromRunTime(object)
 		if err != nil {
 			return err
 		}
-		s := &v1alpha1.SharedService{}
-		if err := json.Unmarshal(bytes, s); err != nil {
-			return err
+
+		if sharedService.Status.Ready == true {
+			services = append(services, brokerServiceFromSharedService(sharedService))
 		}
-		fmt.Println("shared service is ", s)
-		// todo: if service is ready
-		services = append(services, &brokerapi.Service{
-			Name:        "user-provided-service",
-			ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
-			Description: "A user provided service",
-			Plans: []brokerapi.ServicePlan{{
-				Name:        "default",
-				ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
-				Description: "Sample plan description",
-				Free:        true,
-			}, {
-				Name:        "premium",
-				ID:          "cc0d7529-18e8-416d-8946-6f7456acd589",
-				Description: "Premium plan",
-				Free:        false,
-			},
-			},
-			Bindable:       true,
-			PlanUpdateable: true,
-		})
 
 		return nil
 	})
