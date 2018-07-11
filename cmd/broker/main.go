@@ -58,7 +58,9 @@ func runWithContext(ctx context.Context) error {
 	addr := ":" + strconv.Itoa(options.Port)
 
 	var err error
-	sharedResourceClient, _, err := k8sclient.GetResourceClient("aerogear.org/v1alpha1", "SharedService", "managed")
+	// can crash is not shared service resource is defined
+	// get namespace
+	sharedResourceClient, _, err := k8sclient.GetResourceClient("aerogear.org/v1alpha1", "SharedService", "test")
 	fmt.Printf("%v %v\n", sharedResourceClient, err)
 	ctrlr := controller.CreateController(sharedResourceClient)
 	if options.TLSCert == "" && options.TLSKey == "" {
