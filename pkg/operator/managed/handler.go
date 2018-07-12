@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/aerogear/managed-services/pkg/apis/aerogear/v1alpha1"
 
@@ -46,9 +47,14 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	switch o := event.Object.(type) {
 	case *v1alpha1.SharedService:
 		if event.Deleted {
-			return h.handleSharedServiceDelete(o)
+			h.handleSharedServiceDelete(o)
 		}
-		return h.handleSharedServiceCreateUpdate(o)
+		h.handleSharedServiceCreateUpdate(o)
+	case *v1alpha1.SharedServiceInstance:
+		if event.Deleted {
+			return h.handleSharedServiceInstanceDelete(o)
+		}
+		return h.handleSharedServiceInstanceCreateUpdate(o)
 	case *v1alpha1.SharedServiceSlice:
 		if event.Deleted {
 			return h.handleSharedServiceSliceDelete(o)
@@ -89,10 +95,9 @@ func buildServiceInstance(namespace string, serviceName string, parameters []byt
 	}
 }
 
-func (h *Handler) getServiceClass(service *v1alpha1.SharedService) (*v1beta1.ClusterServiceClass, error) {
-	svcCopy := service.DeepCopy()
-	if svcCopy.Spec.ClusterServiceClassName != "" {
-		return h.serviceCatalogClient.Servicecatalog().ClusterServiceClasses().Get(svcCopy.Spec.ClusterServiceClassName, metav1.GetOptions{})
+func (h *Handler) getServiceClass(service v1alpha1.HasClusterServiceClass) (*v1beta1.ClusterServiceClass, error) {
+	if service.GetClusterServiceClassName() != "" {
+		return h.serviceCatalogClient.Servicecatalog().ClusterServiceClasses().Get(service.GetClusterServiceClassName(), metav1.GetOptions{})
 	}
 
 	scs, err := h.serviceCatalogClient.Servicecatalog().ClusterServiceClasses().List(metav1.ListOptions{})
@@ -101,16 +106,89 @@ func (h *Handler) getServiceClass(service *v1alpha1.SharedService) (*v1beta1.Clu
 	}
 
 	for _, sc := range scs.Items {
-		if sc.Spec.CommonServiceClassSpec.ExternalName == svcCopy.Spec.ClusterServiceClassExternalName {
-			svcCopy.Spec.ClusterServiceClassName = sc.Name
+		if sc.Spec.CommonServiceClassSpec.ExternalName == service.GetClusterServiceClassExternalName() {
+			service.SetClusterServiceClassName(sc.Name)
 			return &sc, nil
 		}
 	}
 
-	return nil, errors.New("Could not find a matching Cluster Service Class for:" + svcCopy.Spec.ClusterServiceClassExternalName)
+	return nil, errors.New("Could not find a matching Cluster Service Class for:" + service.GetClusterServiceClassExternalName())
+}
+
+func (h *Handler) provisionService(namespace, serviceClassExternalName string, params map[string]interface{}, sc *v1beta1.ClusterServiceClass) (*v1beta1.ServiceInstance, error) {
+	parameters, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+
+	si := buildServiceInstance(namespace, serviceClassExternalName, parameters, *sc)
+	return h.serviceCatalogClient.Servicecatalog().ServiceInstances(namespace).Create(&si)
 }
 
 func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedService) error {
+	if len(service.Spec.CurrentInstances) < service.Spec.RequestedInstances {
+		SharedServiceInstance := &v1alpha1.SharedServiceInstance{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "aerogear.org/v1alpha1",
+				Kind:       "SharedServiceInstance",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      service.ObjectMeta.Name + "-" + strconv.Itoa(len(service.Spec.CurrentInstances)),
+				Namespace: service.ObjectMeta.Namespace,
+			},
+			Spec: v1alpha1.SharedServiceInstanceSpec{
+				Image:  service.Spec.Image,
+				Params: service.Spec.Params,
+				ClusterServiceClassExternalName: service.Spec.ClusterServiceClassExternalName,
+				MaxSlices:                       service.Spec.SlicesPerInstance,
+			},
+		}
+
+		err := sdk.Create(SharedServiceInstance)
+		if err != nil {
+			fmt.Printf("error creating shared service instance: %v\n", err.Error())
+			return err
+		}
+		if service.Spec.CurrentInstances == nil {
+			service.Spec.CurrentInstances = []string{}
+		}
+		service.Spec.CurrentInstances = append(service.Spec.CurrentInstances, SharedServiceInstance.GetName())
+	} else if len(service.Spec.CurrentInstances) > service.Spec.RequestedInstances && len(service.Spec.CurrentInstances) > service.Spec.MinimumInstances {
+		for i, ssi := range service.Spec.CurrentInstances {
+			si := &v1alpha1.SharedServiceInstance{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "aerogear.org/v1alpha1",
+					Kind:       "SharedServiceInstance",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ssi,
+					Namespace: service.GetNamespace(),
+				},
+			}
+			err := sdk.Get(si)
+			if err != nil {
+				return err
+			}
+			if len(si.Status.CurrentSlices) == 0 {
+				err := sdk.Delete(si)
+				if err != nil {
+					return err
+				}
+
+				service.Spec.CurrentInstances = append(service.Spec.CurrentInstances[:i], service.Spec.CurrentInstances[i+1:]...)
+			}
+		}
+	}
+
+	return sdk.Update(service)
+}
+
+func (h *Handler) handleSharedServiceDelete(service *v1alpha1.SharedService) error {
+	fmt.Printf("handling managed service delete\n")
+	return nil
+}
+
+func (h *Handler) handleSharedServiceInstanceCreateUpdate(service *v1alpha1.SharedServiceInstance) error {
 	svcCopy := service.DeepCopy()
 	//If status is empty, then this is a new CRD, start provision request
 	switch svcCopy.Status.Phase {
@@ -125,21 +203,11 @@ func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedServic
 			return err
 		}
 
-		parameters, err := json.Marshal(svcCopy.Spec.Params)
+		siHandle, err := h.provisionService(svcCopy.Namespace, svcCopy.Spec.ClusterServiceClassExternalName, svcCopy.Spec.Params, sc)
 		if err != nil {
 			svcCopy.Status.Phase = v1alpha1.FailedPhase
 			sdk.Update(svcCopy)
 			return err
-		}
-		si := buildServiceInstance(svcCopy.Namespace, svcCopy.Spec.ClusterServiceClassExternalName, parameters, *sc)
-		siHandle, err := h.serviceCatalogClient.Servicecatalog().ServiceInstances(svcCopy.Namespace).Create(&si)
-		if err != nil {
-			svcCopy.Status.Phase = v1alpha1.FailedPhase
-			sdk.Update(svcCopy)
-			return err
-		}
-		if svcCopy.ObjectMeta.Labels == nil {
-			svcCopy.ObjectMeta.Labels = map[string]string{}
 		}
 		svcCopy.Status.ServiceInstance = string(siHandle.ObjectMeta.Name)
 		svcCopy.Status.Phase = v1alpha1.ProvisioningPhase
@@ -162,7 +230,7 @@ func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedServic
 	return nil
 }
 
-func (h *Handler) handleSharedServiceDelete(service *v1alpha1.SharedService) error {
+func (h *Handler) handleSharedServiceInstanceDelete(service *v1alpha1.SharedServiceInstance) error {
 	return h.serviceCatalogClient.ServicecatalogV1beta1().ServiceInstances(service.Namespace).Delete(service.Status.ServiceInstance, &metav1.DeleteOptions{})
 }
 
