@@ -54,6 +54,15 @@ func getSharedResourceClient() (dynamic.ResourceInterface, error) {
 	return sharedResourceClient, err
 }
 
+func getSharedServiceSliceResourceClient() (dynamic.ResourceInterface, error) {
+	apiVersion := "aerogear.org/v1alpha1"
+	kind := "SharedServiceSlice"
+	// how to I get this?
+	namespace := "test"
+	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
+	return sharedResourceClient, err
+}
+
 func runWithContext(ctx context.Context) error {
 	if flag.Arg(0) == "version" {
 		fmt.Printf("%s/%s\n", path.Base(os.Args[0]), broker.VERSION)

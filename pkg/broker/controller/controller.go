@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
+	"github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 )
 
 // Controller defines the APIs that all controllers are expected to support. Implementations
@@ -62,14 +63,18 @@ type userProvidedController struct {
 	rwMutex             sync.RWMutex
 	instanceMap         map[string]*userProvidedServiceInstance
 	sharedServiceClient dynamic.ResourceInterface
+	sharedServiceSliceClient dynamic.ResourceInterface
+	brokerNS  string
 }
 
 // CreateController creates an instance of a User Provided service broker controller.
-func CreateController(sharedServiceClient dynamic.ResourceInterface) Controller {
+func CreateController(brokerNS string, sharedServiceSlice, sharedServiceClient dynamic.ResourceInterface) Controller {
 	var instanceMap = make(map[string]*userProvidedServiceInstance)
 	return &userProvidedController{
 		instanceMap:         instanceMap,
 		sharedServiceClient: sharedServiceClient,
+		brokerNS:brokerNS,
+		sharedServiceSliceClient:sharedServiceSlice,
 	}
 }
 
@@ -87,20 +92,56 @@ func sharedServiceFromRunTime(object runtime.Object) (*v1alpha1.SharedService, e
 
 func brokerServiceFromSharedService(sharedService *v1alpha1.SharedService) *brokerapi.Service {
 	// uuid generator
+	// hard coded for keycloak
 	return &brokerapi.Service{
-		Name:        sharedService.Spec.ClusterServiceClassExternalName + "-slice",
-		ID:          "4f6e6cf6-ffdd-425f-a2c7-3c9258ad2468",
-		Description: "A user provided service",
+		Name:        sharedService.Name + "-slice",
+		ID:          sharedService.Name + "-slice",
+		Description: sharedService.Name + " shared service",
+		Metadata:map[string]string{"serviceName":sharedService.Name},
 		Plans: []brokerapi.ServicePlan{{
 			Name:        "shared",
-			ID:          "86064792-7ea2-467b-af93-ac9694d96d52",
-			Description: "Sample plan description",
+			ID:          sharedService.Name + "-slice-plan",
+			Description: "this plan gives you access to a shared managed keycloak instance",
 			Free:        true,
+			Schemas:&brokerapi.Schemas{
+				ServiceBinding:&brokerapi.ServiceBindingSchema{
+					Create:&brokerapi.RequestResponseSchema{
+						InputParametersSchema:brokerapi.InputParametersSchema{
+							Parameters: map[string]interface{}{
+								"$schema": "http://json-schema.org/draft-04/schema#",
+								"type":    "object",
+								"properties": map[string]interface{}{
+									"Username": map[string]interface{}{
+										"description": "Username",
+										"type":        "string",
+									},
+									"ClientType": map[string]interface{}{
+										"description": "ClientType",
+										"type":        "string",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 		},
 		Bindable:       true,
 		PlanUpdateable: false,
 	}
+}
+
+var services []*brokerapi.Service
+
+// todo lock
+func findServiceById(id string)*brokerapi.Service{
+	for _, s := range services{
+		if s.ID == id{
+			return s
+		}
+	}
+	return nil
 }
 
 func (c *userProvidedController) Catalog() (*brokerapi.Catalog, error) {
@@ -135,35 +176,28 @@ func (c *userProvidedController) CreateServiceInstance(
 	req *brokerapi.CreateServiceInstanceRequest,
 ) (*brokerapi.CreateServiceInstanceResponse, error) {
 	glog.Info("CreateServiceInstance()")
-	credString, ok := req.Parameters["credentials"]
-	c.rwMutex.Lock()
-	defer c.rwMutex.Unlock()
-	if ok {
-		jsonCred, err := json.Marshal(credString)
-		if err != nil {
-			glog.Errorf("Failed to marshal credentials: %v", err)
-			return nil, err
-		}
-		var cred brokerapi.Credential
-		err = json.Unmarshal(jsonCred, &cred)
-		if err != nil {
-			glog.Errorf("Failed to unmarshal credentials: %v", err)
-			return nil, err
-		}
-
-		c.instanceMap[id] = &userProvidedServiceInstance{
-			Name:       id,
-			Credential: &cred,
-		}
-	} else {
-		c.instanceMap[id] = &userProvidedServiceInstance{
-			Name: id,
-			Credential: &brokerapi.Credential{
-				"special-key-1": "special-value-1",
-				"special-key-2": "special-value-2",
+	s := findServiceById(id)
+	serviceMeta := s.Metadata.(map[string]string)
+	ss := &v1alpha1.SharedServiceSlice{
+		ObjectMeta:metav1.ObjectMeta{
+			Name:id,
+			//move to config
+			Namespace:c.brokerNS,
+			Labels:map[string]string{
+				"serviceInstanceID":id,
 			},
-		}
+		},
+		Spec:v1alpha1.SharedServiceSliceSpec{
+			ServiceType:serviceMeta["serviceName"],
+			Params:req.Parameters,
+		},
 	}
+
+	if _, err := c.sharedServiceSliceClient.Create(k8sutil.UnstructuredFromRuntimeObject(ss)); err != nil{
+		glog.Error("error creating shared service slice ", err)
+
+	}
+
 
 	glog.Infof("Created User Provided Service Instance:\n%v\n", c.instanceMap[id])
 	return &brokerapi.CreateServiceInstanceResponse{}, nil
@@ -176,6 +210,25 @@ func (c *userProvidedController) GetServiceInstanceLastOperation(
 	operation string,
 ) (*brokerapi.LastOperationResponse, error) {
 	glog.Info("GetServiceInstanceLastOperation()")
+	if operation == "provision"{
+		unstructSSL, err := c.sharedServiceSliceClient.Get(instanceID, metav1.GetOptions{})
+		if err != nil{
+			return nil, err
+		}
+		serviceSlice := &v1alpha1.SharedServiceSlice{}
+		if err := k8sutil.UnstructuredIntoRuntimeObject(unstructSSL, serviceSlice); err != nil{
+			return nil, err
+		}
+		if serviceSlice.Status.Phase == "provisioning" {
+			return &brokerapi.LastOperationResponse{Description: serviceSlice.Status.Message, State: brokerapi.StateInProgress}, nil
+		}
+		if serviceSlice.Status.Phase == "failed"{
+			return &brokerapi.LastOperationResponse{Description: serviceSlice.Status.Message, State: brokerapi.StateFailed}, nil
+		}
+		if serviceSlice.Status.Phase == "complete"{
+			return &brokerapi.LastOperationResponse{Description: serviceSlice.Status.Message, State: brokerapi.StateSucceeded}, nil
+		}
+	}
 	return nil, errors.New("Unimplemented")
 }
 

@@ -1,7 +1,7 @@
 apiVersion: "aerogear.org/v1alpha1"
 kind: "SharedService"
 metadata:
-  name: "example"
+  name: "keycloak"
 spec:
   image: "docker.io/aerogearcatalog/keycloak-apb:1.0.0-alpha"
   cluster_service_class_external_name: "dh-keycloak-apb"

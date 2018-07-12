@@ -66,6 +66,8 @@ type SharedServiceSliceStatus struct {
 	SliceServiceInstance string `json:"slice_service_instance"`
 	// the ServiceInstanceID that represents the parent shared service
 	SharedServiceInstance string `json:"shared_service_instance"`
+	// Human readable message about what is happening
+	Message string `json:"message"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
