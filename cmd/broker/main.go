@@ -14,6 +14,8 @@ import (
 	"github.com/aerogear/managed-services/pkg/broker/controller"
 	"github.com/aerogear/managed-services/pkg/broker/server"
 	glog "github.com/sirupsen/logrus"
+	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
+	"k8s.io/client-go/dynamic"
 )
 
 var options struct {
@@ -43,6 +45,14 @@ func run() error {
 	return runWithContext(ctx)
 }
 
+func getSharedResourceClient() (dynamic.ResourceInterface, error) {
+	apiVersion := "aerogear.org/v1alpha1"
+	kind := "SharedService"
+	namespace := os.Getenv("POD_NAMESPACE")
+	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
+	return sharedResourceClient, err
+}
+
 func runWithContext(ctx context.Context) error {
 	if flag.Arg(0) == "version" {
 		fmt.Printf("%s/%s\n", path.Base(os.Args[0]), broker.VERSION)
@@ -55,9 +65,14 @@ func runWithContext(ctx context.Context) error {
 	}
 
 	addr := ":" + strconv.Itoa(options.Port)
-	ctrlr := controller.CreateController()
-
 	var err error
+
+	sharedResourceClient, err := getSharedResourceClient()
+	if err != nil {
+		return err
+	}
+	ctrlr := controller.CreateController(sharedResourceClient)
+
 	if options.TLSCert == "" && options.TLSKey == "" {
 		err = server.Run(ctx, addr, ctrlr)
 	} else {

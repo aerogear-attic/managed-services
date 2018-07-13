@@ -57,6 +57,10 @@ objects:
                 secretKeyRef:
                   name: msb-tls
                   key: tls.key
+              - name: POD_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
             ports:
             - containerPort: 8080
             readinessProbe:
