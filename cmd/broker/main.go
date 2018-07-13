@@ -81,7 +81,11 @@ func runWithContext(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ctrlr := controller.CreateController(sharedResourceClient)
+	sharedServiceSliceClient, err := getSharedServiceSliceResourceClient()
+	if err != nil{
+		return err
+	}
+	ctrlr := controller.CreateController("test",sharedResourceClient,sharedServiceSliceClient)
 
 	if options.TLSCert == "" && options.TLSKey == "" {
 		err = server.Run(ctx, addr, ctrlr)
