@@ -29,7 +29,7 @@ type SharedService struct {
 
 type SharedServiceSpec struct {
 	Service                         string                 `json:"service"`
-	RequestedInstances              int                    `json:"requested_instances"`
+	RequiredInstances               int                    `json:"required_instances"`
 	MinimumInstances                int                    `json:"minimum_instances"`
 	MaximumInstances                int                    `json:"maximum_instances"`
 	CurrentInstances                []string               `json:"current_instances"`

@@ -24,7 +24,7 @@ spec:
               type: int
             currentInstances:
               type: object
-            requestedInstances:
+            requiredInstances:
               type: int
             params:
               description: parameters for creating the services

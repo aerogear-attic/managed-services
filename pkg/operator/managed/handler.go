@@ -2,7 +2,6 @@ package managed
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/aerogear/managed-services/pkg/apis/aerogear/v1alpha1"
 
@@ -126,15 +125,16 @@ func (h *Handler) provisionService(namespace, serviceClassExternalName string, p
 }
 
 func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedService) error {
-	if len(service.Spec.CurrentInstances) < service.Spec.RequestedInstances {
+	if len(service.Spec.CurrentInstances) < service.Spec.RequiredInstances {
+
 		SharedServiceInstance := &v1alpha1.SharedServiceInstance{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "aerogear.org/v1alpha1",
 				Kind:       "SharedServiceInstance",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      service.ObjectMeta.Name + "-" + strconv.Itoa(len(service.Spec.CurrentInstances)),
-				Namespace: service.ObjectMeta.Namespace,
+				Namespace:    service.ObjectMeta.Namespace,
+				GenerateName: fmt.Sprintf("%v-", service.ObjectMeta.Name),
 			},
 			Spec: v1alpha1.SharedServiceInstanceSpec{
 				Image:  service.Spec.Image,
@@ -153,7 +153,7 @@ func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedServic
 			service.Spec.CurrentInstances = []string{}
 		}
 		service.Spec.CurrentInstances = append(service.Spec.CurrentInstances, SharedServiceInstance.GetName())
-	} else if len(service.Spec.CurrentInstances) > service.Spec.RequestedInstances && len(service.Spec.CurrentInstances) > service.Spec.MinimumInstances {
+	} else if len(service.Spec.CurrentInstances) > service.Spec.RequiredInstances && len(service.Spec.CurrentInstances) > service.Spec.MinimumInstances {
 		for i, ssi := range service.Spec.CurrentInstances {
 			si := &v1alpha1.SharedServiceInstance{
 				TypeMeta: metav1.TypeMeta{
