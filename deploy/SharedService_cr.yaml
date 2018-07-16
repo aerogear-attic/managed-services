@@ -1,12 +1,14 @@
 apiVersion: "aerogear.org/v1alpha1"
 kind: "SharedService"
 metadata:
-  name: "example"
+  name: "keycloak-example"
 spec:
   image: "docker.io/aerogearcatalog/keycloak-apb:1.0.0-alpha"
   cluster_service_class_external_name: "dh-keycloak-apb"
   required_instances: 1
   maximum_instances: 2
+  service: keycloak
+  slices_per_instance: 10
   params: 
     ADMIN_USERNAME: "admin"
     ADMIN_PASSWORD: "admin"

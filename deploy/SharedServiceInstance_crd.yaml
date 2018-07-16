@@ -16,6 +16,8 @@ spec:
       properties:
         spec:
           properties:
+            service:
+              type: string
             image:
               type: string
             clusterServiceClassExternalName:

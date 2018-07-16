@@ -16,7 +16,6 @@ import (
 
 	"bytes"
 	"encoding/json"
-	"os"
 
 	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	"github.com/lestrrat/go-jsschema"
@@ -69,7 +68,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	return nil
 }
 
-func buildServiceInstance(namespace string, serviceName string, parameters []byte, clusterServiceClass v1beta1.ClusterServiceClass) v1beta1.ServiceInstance {
+func buildServiceInstance(namespace, serviceName, plan string, parameters []byte, clusterServiceClass v1beta1.ClusterServiceClass) v1beta1.ServiceInstance {
 	return v1beta1.ServiceInstance{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "servicecatalog.k8s.io/v1beta1",
@@ -82,6 +81,7 @@ func buildServiceInstance(namespace string, serviceName string, parameters []byt
 		Spec: v1beta1.ServiceInstanceSpec{
 			PlanReference: v1beta1.PlanReference{
 				ClusterServiceClassExternalName: clusterServiceClass.Spec.ExternalName,
+				ClusterServicePlanExternalName:  plan,
 			},
 			ClusterServiceClassRef: &v1beta1.ClusterObjectReference{
 				Name: clusterServiceClass.Name,
@@ -120,7 +120,7 @@ func (h *Handler) provisionService(namespace, serviceClassExternalName string, p
 		return nil, err
 	}
 
-	si := buildServiceInstance(namespace, serviceClassExternalName, parameters, *sc)
+	si := buildServiceInstance(namespace, serviceClassExternalName, "dedicated", parameters, *sc)
 	return h.serviceCatalogClient.Servicecatalog().ServiceInstances(namespace).Create(&si)
 }
 
@@ -137,8 +137,9 @@ func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedServic
 				GenerateName: fmt.Sprintf("%v-", service.ObjectMeta.Name),
 			},
 			Spec: v1alpha1.SharedServiceInstanceSpec{
-				Image:  service.Spec.Image,
-				Params: service.Spec.Params,
+				Image:   service.Spec.Image,
+				Params:  service.Spec.Params,
+				Service: service.Spec.Service,
 				ClusterServiceClassExternalName: service.Spec.ClusterServiceClassExternalName,
 				MaxSlices:                       service.Spec.SlicesPerInstance,
 			},
@@ -184,7 +185,26 @@ func (h *Handler) handleSharedServiceCreateUpdate(service *v1alpha1.SharedServic
 }
 
 func (h *Handler) handleSharedServiceDelete(service *v1alpha1.SharedService) error {
-	fmt.Printf("handling managed service delete\n")
+	for _, ssi := range service.Spec.CurrentInstances {
+		si := &v1alpha1.SharedServiceInstance{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "aerogear.org/v1alpha1",
+				Kind:       "SharedServiceInstance",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ssi,
+				Namespace: service.GetNamespace(),
+			},
+		}
+		err := sdk.Get(si)
+		if err != nil {
+			return err
+		}
+		err = sdk.Delete(si)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -234,12 +254,58 @@ func (h *Handler) handleSharedServiceInstanceDelete(service *v1alpha1.SharedServ
 	return h.serviceCatalogClient.ServicecatalogV1beta1().ServiceInstances(service.Namespace).Delete(service.Status.ServiceInstance, &metav1.DeleteOptions{})
 }
 
-func (h *Handler) allocateSharedServiceInstanceWithCapacity(serviceType string) (*v1beta1.ServiceInstance, error) {
-	// look up sharedserviceinstanc of the given type and increment the capcity
-	// look up the service instance referenced in the sharedserviceinstance and return it
-	//work around for testing
-	sharedServiceInstsnce := os.Getenv("SSI")
-	return h.serviceCatalogClient.ServicecatalogV1beta1().ServiceInstances(h.operatorNS).Get(sharedServiceInstsnce, metav1.GetOptions{})
+func (h *Handler) getSharedServiceByType(serviceType string) (*v1alpha1.SharedService, error) {
+	ssl := &v1alpha1.SharedServiceList{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "aerogear.org/v1alpha1",
+			Kind:       "SharedService",
+		},
+	}
+	err := sdk.List(h.operatorNS, ssl)
+	if err != nil {
+		return nil, errors.Wrap(err, "error loading sharedServices")
+	}
+
+	logrus.Infof("Looking for %v\n", serviceType)
+	for _, ss := range ssl.Items {
+		if ss.Spec.Service == serviceType {
+			return &ss, nil
+		}
+	}
+	return nil, nil
+}
+
+func (h *Handler) allocateSharedServiceInstanceWithCapacity(slice *v1alpha1.SharedServiceSlice) (*v1beta1.ServiceInstance, error) {
+	ss, err := h.getSharedServiceByType(slice.Spec.ServiceType)
+	if err != nil {
+		return nil, errors.Wrap(err, "error finding sharedService for type: "+slice.Spec.ServiceType)
+	}
+	for _, ssin := range ss.Spec.CurrentInstances {
+		ssi := &v1alpha1.SharedServiceInstance{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "aerogear.org/v1alpha1",
+				Kind:       "SharedServiceInstance",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ssin,
+				Namespace: ss.GetNamespace(),
+			},
+		}
+		err := sdk.Get(ssi)
+		if err != nil {
+			return nil, errors.Wrap(err, "could not get ssi: "+ssin)
+		}
+		logrus.Infof("Checking capacity (%v of %v) of %v", len(ssi.Status.CurrentSlices), ssi.Spec.MaxSlices, ssi.GetName())
+		if len(ssi.Status.CurrentSlices) < ssi.Spec.MaxSlices {
+			si, err := h.serviceCatalogClient.Servicecatalog().ServiceInstances(h.operatorNS).Get(ssi.Status.ServiceInstance, metav1.GetOptions{})
+			if err != nil {
+				return nil, errors.Wrap(err, "error retrieving si: "+ssi.Status.ServiceInstance)
+			}
+			return si, nil
+		}
+	}
+	return nil, nil
+
 }
 
 func (h *Handler) getParamValue(slice *v1alpha1.SharedServiceSlice, sharedServiceInstanceID string, key string, paramSchema *schema.Schema) (interface{}, error) {
@@ -282,7 +348,7 @@ func (h *Handler) provisionSlice(serviceSlice *v1alpha1.SharedServiceSlice, si *
 	fmt.Println("provisioning slice")
 	// find shared service with capacity of the given type
 
-	availablePlans, err := h.serviceCatalogClient.ServicecatalogV1beta1().ClusterServicePlans().List(metav1.ListOptions{FieldSelector: "spec.externalName=shared"})
+	availablePlans, err := h.serviceCatalogClient.ServicecatalogV1beta1().ClusterServicePlans().List(metav1.ListOptions{FieldSelector: "spec.externalName=dedicated"})
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get service plans")
 	}
@@ -369,37 +435,37 @@ func (h *Handler) checkServiceInstanceReady(sid string) (bool, error) {
 	return false, nil
 }
 
-func (h *Handler) handleSharedServiceSliceCreateUpdate(service *v1alpha1.SharedServiceSlice) error {
-	fmt.Println("called handleSharedServiceSliceCreateUpdate", service.Status.Phase, service.Status.Action)
-	ssCopy := service.DeepCopy()
-	if ssCopy.Status.Phase != v1alpha1.AcceptedPhase && ssCopy.Status.Phase != v1alpha1.CompletePhase {
-		ssCopy.Status.Phase = v1alpha1.AcceptedPhase
-		return sdk.Update(ssCopy)
+func (h *Handler) handleSharedServiceSliceCreateUpdate(slice *v1alpha1.SharedServiceSlice) error {
+	fmt.Println("called handleSharedServiceSliceCreateUpdate", slice.Status.Phase, slice.Status.Action)
+	sliceCopy := slice.DeepCopy()
+	if sliceCopy.Status.Phase != v1alpha1.AcceptedPhase && sliceCopy.Status.Phase != v1alpha1.CompletePhase {
+		sliceCopy.Status.Phase = v1alpha1.AcceptedPhase
+		return sdk.Update(sliceCopy)
 	}
-	if ssCopy.Status.Action == "provisioned" {
+	if sliceCopy.Status.Action == "provisioned" {
 		// look up the secret and save to the shared service slice and set the status to complete
-		ssCopy.Status.Phase = v1alpha1.CompletePhase
-		return sdk.Update(ssCopy)
+		sliceCopy.Status.Phase = v1alpha1.CompletePhase
+		return sdk.Update(sliceCopy)
 	}
-	if ssCopy.Status.Action == "provisioning" {
+	if sliceCopy.Status.Action == "provisioning" {
 		fmt.Print("provisioning")
-		ready, err := h.checkServiceInstanceReady(ssCopy.Status.SliceServiceInstance)
+		ready, err := h.checkServiceInstanceReady(sliceCopy.Status.SliceServiceInstance)
 		if err != nil {
 			return err
 		}
 		if ready {
-			ssCopy.Status.Phase = v1alpha1.CompletePhase
-			ssCopy.Status.Action = "provisioned"
-			return sdk.Update(ssCopy)
+			sliceCopy.Status.Phase = v1alpha1.CompletePhase
+			sliceCopy.Status.Action = "provisioned"
+			return sdk.Update(sliceCopy)
 		}
 		return nil
 	}
-	if ssCopy.Labels == nil {
-		ssCopy.Labels = map[string]string{}
+	if sliceCopy.Labels == nil {
+		sliceCopy.Labels = map[string]string{}
 	}
 
-	if ssCopy.Status.Action != "provisioning" && ssCopy.Status.SharedServiceInstance == "" {
-		si, err := h.allocateSharedServiceInstanceWithCapacity(ssCopy.Spec.ServiceType)
+	if sliceCopy.Status.Action != "provisioning" && sliceCopy.Status.SharedServiceInstance == "" {
+		si, err := h.allocateSharedServiceInstanceWithCapacity(sliceCopy)
 		if err != nil {
 			return errors.Wrap(err, "unexpected error when looking for a service instance with capacity")
 		}
@@ -408,24 +474,24 @@ func (h *Handler) handleSharedServiceSliceCreateUpdate(service *v1alpha1.SharedS
 			fmt.Println("no si found with capcity")
 			return errors.New("failed to find a service instance with capacity")
 		}
-		ssCopy.Status.SharedServiceInstance = si.Name
-		ssCopy.Labels["SharedServiceInstance"] = si.Name
-		return sdk.Update(ssCopy)
+		sliceCopy.Status.SharedServiceInstance = si.Name
+		sliceCopy.Labels["SharedServiceInstance"] = si.Name
+		return sdk.Update(sliceCopy)
 	}
-	if ssCopy.Status.Action != "provisioning" && ssCopy.Status.SharedServiceInstance != "" {
-		ssi, err := h.serviceCatalogClient.ServicecatalogV1beta1().ServiceInstances(h.operatorNS).Get(ssCopy.Status.SharedServiceInstance, metav1.GetOptions{})
+	if sliceCopy.Status.Action != "provisioning" && sliceCopy.Status.SharedServiceInstance != "" {
+		ssi, err := h.serviceCatalogClient.ServicecatalogV1beta1().ServiceInstances(h.operatorNS).Get(sliceCopy.Status.SharedServiceInstance, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		sliceID, err := h.provisionSlice(ssCopy, ssi, ssCopy.Spec.ServiceType, "shared")
+		sliceID, err := h.provisionSlice(sliceCopy, ssi, sliceCopy.Spec.ServiceType, "managed")
 		if err != nil && !apierrors.IsNotFound(err) {
 			// if is a not found err return
 			return err
 		}
-		ssCopy.Status.Action = "provisioning"
-		ssCopy.Labels["SliceServiceInstance"] = sliceID
-		ssCopy.Status.SliceServiceInstance = sliceID
-		return sdk.Update(ssCopy)
+		sliceCopy.Status.Action = "provisioning"
+		sliceCopy.Labels["SliceServiceInstance"] = sliceID
+		sliceCopy.Status.SliceServiceInstance = sliceID
+		return sdk.Update(sliceCopy)
 	}
 
 	return nil

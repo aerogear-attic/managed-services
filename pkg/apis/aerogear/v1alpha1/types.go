@@ -80,6 +80,7 @@ type SharedServiceInstanceSpec struct {
 	ClusterServiceClassExternalName string                 `json:"cluster_service_class_external_name"`
 	Params                          map[string]interface{} `json:"params"`
 	MaxSlices                       int                    `json:"max_slices"`
+	Service                         string                 `json:"service"`
 }
 type SharedServiceInstanceStatus struct {
 	// Fill me
