@@ -4,6 +4,9 @@ import (
 	"context"
 	"runtime"
 
+	"net"
+	"os"
+
 	"github.com/aerogear/managed-services/pkg/operator/managed"
 	sc "github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset"
 	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
@@ -12,8 +15,6 @@ import (
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/rest"
-	"os"
-	"net"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -29,11 +30,12 @@ func main() {
 	k8sclient.GetKubeClient()
 	cfg := mustNewKubeConfig()
 	svcClient, err := sc.NewForConfig(cfg)
-	if err !=nil{
+	if err != nil {
 		logrus.Fatal("failed to get service catalog client ", err)
 	}
 	resource := "aerogear.org/v1alpha1"
 	SharedServicekind := "SharedService"
+	SharedServiceInstancekind := "SharedServiceInstance"
 	SharedServiceSlicekind := "SharedServiceSlice"
 	namespace, err := k8sutil.GetWatchNamespace()
 	if err != nil {
@@ -41,8 +43,9 @@ func main() {
 	}
 	resyncPeriod := 5
 	logrus.Infof("Watching %s, %s, %s, %d", resource, SharedServicekind, namespace, resyncPeriod)
-	sdk.Watch(resource, SharedServicekind, namespace, resyncPeriod)
+	sdk.Watch(resource, SharedServiceInstancekind, namespace, resyncPeriod)
 	sdk.Watch(resource, SharedServiceSlicekind, namespace, resyncPeriod)
+	sdk.Watch(resource, SharedServicekind, namespace, resyncPeriod)
 	k8client := k8sclient.GetKubeClient()
 
 	resourceClient, _, err := k8sclient.GetResourceClient(resource, SharedServicekind, namespace)
@@ -50,10 +53,9 @@ func main() {
 	sdk.Run(context.TODO())
 }
 
-
 // mustNewKubeClientAndConfig returns the in-cluster config and kubernetes client
 // or if KUBERNETES_CONFIG is given an out of cluster config and client
-func mustNewKubeConfig() (*rest.Config) {
+func mustNewKubeConfig() *rest.Config {
 	var cfg *rest.Config
 	var err error
 	if os.Getenv(k8sutil.KubeConfigEnvVar) != "" {

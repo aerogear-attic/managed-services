@@ -6,6 +6,12 @@ import (
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+type HasClusterServiceClass interface {
+	GetClusterServiceClassExternalName() string
+	GetClusterServiceClassName() string
+	SetClusterServiceClassName(string)
+}
+
 type SharedServiceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`
@@ -22,18 +28,66 @@ type SharedService struct {
 }
 
 type SharedServiceSpec struct {
+	Service                         string                 `json:"service"`
+	RequiredInstances               int                    `json:"required_instances"`
+	MinimumInstances                int                    `json:"minimum_instances"`
+	MaximumInstances                int                    `json:"maximum_instances"`
+	CurrentInstances                []string               `json:"current_instances"`
+	SlicesPerInstance               int                    `json:"slices_per_instance"`
+	Params                          map[string]interface{} `json:"params"`
+	Image                           string                 `json:"image"`
+	ClusterServiceClassExternalName string                 `json:"cluster_service_class_external_name"`
+	ClusterServiceClassName         string                 `json:"cluster_service_class_name"`
+}
+type SharedServiceStatus struct {
+	// Fill me
+	Ready bool `json:"ready"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SharedServiceInstanceList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata"`
+	Items           []SharedServiceInstance `json:"items"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type SharedServiceInstance struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata"`
+	Spec              SharedServiceInstanceSpec   `json:"spec"`
+	Status            SharedServiceInstanceStatus `json:"status,omitempty"`
+}
+
+func (s *SharedServiceInstance) GetClusterServiceClassExternalName() string {
+	return s.Spec.ClusterServiceClassExternalName
+}
+
+func (s *SharedServiceInstance) GetClusterServiceClassName() string {
+	return s.Spec.ClusterServiceClassName
+}
+
+func (s *SharedServiceInstance) SetClusterServiceClassName(csName string) {
+	s.Spec.ClusterServiceClassName = csName
+}
+
+type SharedServiceInstanceSpec struct {
 	//Image the docker image to run to provision the service
 	Image                           string                 `json:"image"`
 	ClusterServiceClassName         string                 `json:"cluster_service_class_name"`
 	ClusterServiceClassExternalName string                 `json:"cluster_service_class_external_name"`
 	Params                          map[string]interface{} `json:"params"`
+	MaxSlices                       int                    `json:"max_slices"`
 }
-type SharedServiceStatus struct {
+type SharedServiceInstanceStatus struct {
 	// Fill me
-	Ready           bool   `json:"ready"`
-	Status          string `json:"status"` // provisioning, failed, provisioned
-	Phase           Phase  `json:"phase"`
-	ServiceInstance string `json:"service_instance"`
+	Ready           bool     `json:"ready"`
+	Status          string   `json:"status"` // provisioning, failed, provisioned
+	Phase           Phase    `json:"phase"`
+	ServiceInstance string   `json:"service_instance"`
+	CurrentSlices   []string `json:"current_slices"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
