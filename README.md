@@ -16,6 +16,9 @@ make push_broker
 # Switch to a new project
 oc new-project managed-services-broker
 
+# Set role for the broker
+oc create -f deploy/rbac.yaml
+
 # Process the template and create the broker deployment
 oc process -f templates/broker.template.yaml | oc create -f -
 

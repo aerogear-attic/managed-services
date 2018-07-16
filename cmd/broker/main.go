@@ -45,20 +45,16 @@ func run() error {
 	return runWithContext(ctx)
 }
 
-func getSharedResourceClient() (dynamic.ResourceInterface, error) {
+func getSharedResourceClient(namespace string) (dynamic.ResourceInterface, error) {
 	apiVersion := "aerogear.org/v1alpha1"
 	kind := "SharedService"
-	// how to I get this?
-	namespace := "test"
 	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
 	return sharedResourceClient, err
 }
 
-func getSharedServiceSliceResourceClient() (dynamic.ResourceInterface, error) {
+func getSharedServiceSliceResourceClient(namespace string) (dynamic.ResourceInterface, error) {
 	apiVersion := "aerogear.org/v1alpha1"
 	kind := "SharedServiceSlice"
-	// how to I get this?
-	namespace := "test"
 	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
 	return sharedResourceClient, err
 }
@@ -74,18 +70,21 @@ func runWithContext(ctx context.Context) error {
 		return nil
 	}
 
+	namespace := os.Getenv("POD_NAMESPACE")
+
 	addr := ":" + strconv.Itoa(options.Port)
 	var err error
 
-	sharedResourceClient, err := getSharedResourceClient()
+	sharedResourceClient, err := getSharedResourceClient(namespace)
 	if err != nil {
 		return err
 	}
-	sharedServiceSliceClient, err := getSharedServiceSliceResourceClient()
+	sharedServiceSliceClient, err := getSharedServiceSliceResourceClient(namespace)
 	if err != nil{
 		return err
 	}
-	ctrlr := controller.CreateController("test",sharedResourceClient,sharedServiceSliceClient)
+	ctrlr := controller.CreateController(namespace,sharedResourceClient,sharedServiceSliceClient)
+	ctrlr.Catalog()
 
 	if options.TLSCert == "" && options.TLSKey == "" {
 		err = server.Run(ctx, addr, ctrlr)
