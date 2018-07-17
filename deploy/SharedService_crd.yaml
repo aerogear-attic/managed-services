@@ -16,14 +16,18 @@ spec:
       properties:
         spec:
           properties:
-            image:
+            service:
               type: string
-            clusterServiceClassExternalName:
-              type: string
-            clusterServiceClassName:
-              type: string
-            params:
-              description: parameteres for creating the slices
+            minimumInstances:
+              type: int
+            maximumInstances:
+              type: int
+            currentInstances:
               type: object
-            serviceInstance:
-              type: string
+            requiredInstances:
+              type: int
+            params:
+              description: parameters for creating the services
+              type: object
+            slicesPerInstance:
+              type: int
