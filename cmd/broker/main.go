@@ -13,8 +13,8 @@ import (
 	"github.com/aerogear/managed-services/pkg/broker"
 	"github.com/aerogear/managed-services/pkg/broker/controller"
 	"github.com/aerogear/managed-services/pkg/broker/server"
-	glog "github.com/sirupsen/logrus"
 	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
+	glog "github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -45,10 +45,16 @@ func run() error {
 	return runWithContext(ctx)
 }
 
-func getSharedResourceClient() (dynamic.ResourceInterface, error) {
+func getSharedResourceClient(namespace string) (dynamic.ResourceInterface, error) {
 	apiVersion := "aerogear.org/v1alpha1"
 	kind := "SharedService"
-	namespace := os.Getenv("POD_NAMESPACE")
+	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
+	return sharedResourceClient, err
+}
+
+func getSharedServiceSliceResourceClient(namespace string) (dynamic.ResourceInterface, error) {
+	apiVersion := "aerogear.org/v1alpha1"
+	kind := "SharedServiceSlice"
 	sharedResourceClient, _, err := k8sclient.GetResourceClient(apiVersion, kind, namespace)
 	return sharedResourceClient, err
 }
@@ -64,14 +70,21 @@ func runWithContext(ctx context.Context) error {
 		return nil
 	}
 
+	namespace := os.Getenv("POD_NAMESPACE")
+
 	addr := ":" + strconv.Itoa(options.Port)
 	var err error
 
-	sharedResourceClient, err := getSharedResourceClient()
+	sharedResourceClient, err := getSharedResourceClient(namespace)
 	if err != nil {
 		return err
 	}
-	ctrlr := controller.CreateController(sharedResourceClient)
+	sharedServiceSliceClient, err := getSharedServiceSliceResourceClient(namespace)
+	if err != nil{
+		return err
+	}
+	ctrlr := controller.CreateController(namespace,sharedResourceClient,sharedServiceSliceClient)
+	ctrlr.Catalog()
 
 	if options.TLSCert == "" && options.TLSKey == "" {
 		err = server.Run(ctx, addr, ctrlr)

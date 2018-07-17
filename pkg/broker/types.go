@@ -77,6 +77,7 @@ type ContextProfile struct {
 type CreateServiceInstanceResponse struct {
 	DashboardURL string `json:"dashboard_url,omitempty"`
 	Operation    string `json:"operation,omitempty"`
+	Code int `json:"-"`
 }
 
 // DeleteServiceInstanceRequest represents a request to a broker to deprovision an

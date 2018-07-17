@@ -141,7 +141,11 @@ func (s *server) createServiceInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result, err := s.controller.CreateServiceInstance(id, &req); err == nil {
-		util.WriteResponse(w, http.StatusCreated, result)
+		status := http.StatusCreated
+		if result.Code != 0{
+			status = result.Code
+		}
+		util.WriteResponse(w, status, result)
 	} else {
 		util.WriteErrorResponse(w, http.StatusBadRequest, err)
 	}

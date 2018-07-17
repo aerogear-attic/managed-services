@@ -47,20 +47,10 @@ objects:
             - --port
             - "8080"
             env:
-            - name: TLS_CERT
+            - name: POD_NAMESPACE
               valueFrom:
-                secretKeyRef:
-                  name: msb-tls
-                  key: tls.crt
-            - name: TLS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: msb-tls
-                  key: tls.key
-              - name: POD_NAMESPACE
-                valueFrom:
-                  fieldRef:
-                    fieldPath: metadata.namespace
+                fieldRef:
+                  fieldPath: metadata.namespace
             ports:
             - containerPort: 8080
             readinessProbe:
@@ -93,16 +83,13 @@ objects:
         name: msb
       port:
         targetPort: 8080
-      tls:
-        termination: reencrypt
 
   - apiVersion: servicecatalog.k8s.io/v1beta1
     kind: ClusterServiceBroker
     metadata:
       name: managed-services-broker
     spec:
-      url: https://msb.${NAMESPACE}.svc
-      caBundle: ${CA_BUNDLE}
+      url: http://msb.${NAMESPACE}.svc
 
 parameters:
   - name: NAMESPACE

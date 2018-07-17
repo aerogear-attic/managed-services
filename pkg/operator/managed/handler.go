@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
+	"github.com/golang/glog"
 )
 
 func NewHandler(k8sClient kubernetes.Interface, sharedServiceClient dynamic.ResourceInterface, operatorNS string, svcCatalog sc.Interface) sdk.Handler {
@@ -291,7 +292,7 @@ func (h *Handler) provisionSlice(serviceSlice *v1alpha1.SharedServiceSlice, si *
 		return "", errors.New(fmt.Sprintf("expected a single plan with the name shared but found %v", len(availablePlans.Items)))
 	}
 	ap := availablePlans.Items[0]
-	fmt.Println("plan name ", ap.Spec.ExternalName, string(ap.Spec.ServiceInstanceCreateParameterSchema.Raw))
+	fmt.Println("schema ", string(ap.Spec.ServiceInstanceCreateParameterSchema.Raw))
 	paramSchema, err := schema.Read(bytes.NewBuffer(ap.Spec.ServiceInstanceCreateParameterSchema.Raw))
 	if err != nil {
 		logrus.Error("failed to read schema", err)
@@ -347,6 +348,18 @@ func (h *Handler) provisionSlice(serviceSlice *v1alpha1.SharedServiceSlice, si *
 	return csi.Name, nil
 }
 
+type serviceProvisionFailedErr struct{
+	Message string
+}
+func (spe *serviceProvisionFailedErr)Error()string{
+	return spe.Message
+}
+
+func isProvisionErr(err error)bool{
+	_,ok := err.(*serviceProvisionFailedErr)
+	return ok
+}
+
 func (h *Handler) checkServiceInstanceReady(sid string) (bool, error) {
 	fmt.Println("checking service instance ready ", sid)
 	if sid == "" {
@@ -359,11 +372,14 @@ func (h *Handler) checkServiceInstanceReady(sid string) (bool, error) {
 	if si == nil {
 		return false, nil
 	}
-
-	fmt.Println("si status ", err, si.Status.Conditions)
 	for _, c := range si.Status.Conditions {
+		fmt.Println(c.Type, c.Status)
 		if c.Type == v1beta1.ServiceInstanceConditionReady {
 			return c.Status == v1beta1.ConditionTrue, nil
+		}
+		if c.Type == v1beta1.ServiceInstanceConditionFailed{
+			glog.Info("instance in condition failed")
+			return false, &serviceProvisionFailedErr{Message:c.Message}
 		}
 	}
 	return false, nil
@@ -372,7 +388,7 @@ func (h *Handler) checkServiceInstanceReady(sid string) (bool, error) {
 func (h *Handler) handleSharedServiceSliceCreateUpdate(service *v1alpha1.SharedServiceSlice) error {
 	fmt.Println("called handleSharedServiceSliceCreateUpdate", service.Status.Phase, service.Status.Action)
 	ssCopy := service.DeepCopy()
-	if ssCopy.Status.Phase != v1alpha1.AcceptedPhase && ssCopy.Status.Phase != v1alpha1.CompletePhase {
+	if ssCopy.Status.Phase != v1alpha1.AcceptedPhase && (ssCopy.Status.Phase != v1alpha1.CompletePhase || ssCopy.Status.Phase != v1alpha1.FailedPhase ) {
 		ssCopy.Status.Phase = v1alpha1.AcceptedPhase
 		return sdk.Update(ssCopy)
 	}
@@ -385,6 +401,12 @@ func (h *Handler) handleSharedServiceSliceCreateUpdate(service *v1alpha1.SharedS
 		fmt.Print("provisioning")
 		ready, err := h.checkServiceInstanceReady(ssCopy.Status.SliceServiceInstance)
 		if err != nil {
+			if isProvisionErr(err){
+				fmt.Println("Failed to provision")
+				ssCopy.Status.Phase = v1alpha1.FailedPhase
+				ssCopy.Status.Action = "provisioning"
+				return sdk.Update(ssCopy)
+			}
 			return err
 		}
 		if ready {
@@ -417,7 +439,7 @@ func (h *Handler) handleSharedServiceSliceCreateUpdate(service *v1alpha1.SharedS
 		if err != nil {
 			return err
 		}
-		sliceID, err := h.provisionSlice(ssCopy, ssi, ssCopy.Spec.ServiceType, "shared")
+		sliceID, err := h.provisionSlice(ssCopy, ssi, ssCopy.Spec.ServiceType, "managed")
 		if err != nil && !apierrors.IsNotFound(err) {
 			// if is a not found err return
 			return err
